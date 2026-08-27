@@ -2,7 +2,7 @@ name: Build u3d IDTFConverter x64
 on:
   push:
     branches: [ main ]
-  workflow_dispatch: # ✅ 重点！可以手动点按钮触发编译（小白首选）
+  workflow_dispatch:
 
 jobs:
   build-windows-x64:
@@ -14,23 +14,21 @@ jobs:
           repository: ningfei/u3d
           path: u3d-src
 
-      - name: 加载 MSVC x64 编译环境（关键，替代手动开vcvars64）
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-
-      - name: CMake 配置 + NMake编译安装
-        shell: cmd
+      - name: CMake 生成VS工程
         run: |
           cd u3d-src
           mkdir build
           cd build
-          cmake .. -G "NMake Makefiles" ^
-            -Wno-dev ^
-            -DCMAKE_BUILD_TYPE=Release ^
+          cmake .. -G "Visual Studio 17 2022" -A x64 ^
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ^
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}\u3d-output ^
             -DU3D_SHARED:BOOL=OFF
-          nmake install
+
+      - name: MSBuild编译+安装
+        run: |
+          cd u3d-src/build
+          msbuild ALL_BUILD.vcxproj /p:Configuration=Release
+          msbuild INSTALL.vcxproj /p:Configuration=Release
 
       - name: 打包输出文件
         uses: actions/upload-artifact@v4
