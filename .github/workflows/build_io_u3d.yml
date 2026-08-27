@@ -16,7 +16,7 @@ jobs:
         with:
           arch: x64
 
-      # ==========第一步：编译 ningfei/u3d（和之前成功版本完全一致，不动）==========
+      # ==========第一步：编译 ningfei/u3d（保持不变）==========
       - name: Clone ningfei/u3d source
         shell: cmd
         run: |
@@ -32,7 +32,7 @@ jobs:
             -DU3D_SHARED:BOOL=OFF
           nmake install
 
-      # ==========第二步：MeshLab 固定commit，彻底杜绝tag问题==========
+      # ==========第二步：MeshLab 固定commit==========
       - name: Clone MeshLab 2020.07 source
         shell: cmd
         run: |
@@ -41,7 +41,7 @@ jobs:
           git checkout b56ae6f
           git submodule update --init vcglib
 
-      # ==========第三步：Qt5.15.2 改用aqt原生安装，手动设置Qt5_DIR（重点修复，不再依赖action自动set env）==========
+      # ==========第三步：Qt5.15.2 安装==========
       - name: Install Qt5.15.2
         shell: cmd
         run: |
@@ -50,7 +50,7 @@ jobs:
         env:
           PYTHONUNBUFFERED: 1
 
-      # ==========第四步：生成io_u3d CMake，手动传入Qt5路径，不再依赖全局环境自动发现==========
+      # ==========第四步：生成 CMakeLists.txt（重点修复：输出文件名改为CMakeLists.txt）==========
       - name: Generate io_u3d CMakeLists.txt
         shell: cmd
         run: |
@@ -74,15 +74,15 @@ jobs:
           echo target_compile_definitions(io_u3d PRIVATE QT_PLUGIN)
           echo set(CMAKE_INSTALL_PREFIX "%WORKSPACE%/io_u3d-plugin-out")
           echo install(TARGETS io_u3d RUNTIME DESTINATION Plugins)
-          ) > io_u3d.cmake
+          ) > CMakeLists.txt
 
-      # ==========第五步：编译io_u3d.dll，额外打印日志方便排错==========
+      # ==========第五步：编译（修复cmake调用方式，cmake .. 而不是 cmake ..\xxx.cmake）==========
       - name: Build io_u3d.dll
         shell: cmd
         run: |
           mkdir build_io_u3d
           cd build_io_u3d
-          cmake ..\io_u3d.cmake -G "NMake Makefiles" ^
+          cmake .. -G "NMake Makefiles" ^
             -Wno-dev ^
             -DCMAKE_BUILD_TYPE=Release
           nmake install
