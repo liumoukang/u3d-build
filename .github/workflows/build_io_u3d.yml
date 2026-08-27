@@ -2,7 +2,7 @@ name: Build ningfei/u3d + io_u3d.dll x64
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:  # 手动点击运行
+  workflow_dispatch:
 
 jobs:
   build-windows-x64:
@@ -16,7 +16,7 @@ jobs:
         with:
           arch: x64
 
-      # ==========第一步：编译 ningfei/u3d 静态库，参数与IDTFConverter_x64完全一致==========
+      # ==========第一步：编译 ningfei/u3d 静态库（参数和之前成功版本完全一致）==========
       - name: Clone ningfei/u3d source
         shell: cmd
         run: |
@@ -28,84 +28,70 @@ jobs:
           cmake .. -G "NMake Makefiles" ^
             -Wno-dev ^
             -DCMAKE_BUILD_TYPE=Release ^
-            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}\u3d-install ^
-            -DU3D_SHARED:BOOL=OFF   # 静态编译，和你之前IDTFConverter构建参数100%对齐！
+            -DCMAKE_INSTALL_PREFIX=%GITHUB_WORKSPACE%\u3d-install ^
+            -DU3D_SHARED:BOOL=OFF
           nmake install
 
-      # ==========第二步：下载meshlab‑2020.07源码，只提取io_u3d插件源码 + vcg依赖==========
-      - name: Clone MeshLab 2020.07 tag source
+      # ==========第二步：拉取MeshLab2020.07源码+vcglib==========
+      - name: Clone MeshLab 2020.07 source
         shell: cmd
         run: |
           git clone --depth 1 --branch MeshLab_2020_07 https://github.com/cnr-isti-vclab/meshlab.git meshlab-src
           cd meshlab-src
           git submodule update --init vcglib
 
-      # 写io_u3d插件专用CMakeLists：使用刚刚编译好的ningfei/u3d静态库，不使用meshlab自带老的u3d源码
-      - name: Generate io_u3d plugin CMakeLists.txt
-        shell: powershell
+      # ==========第三步：安装Qt5.15（meshlab2020.07使用Qt5，io_u3d是Qt插件，必须！）==========
+      - name: Install Qt5
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          arch: 'win64_msvc2019_64'
+          modules: qtbase
+
+      # ==========第四步：直接生成io_u3d的CMakeLists（改用cmd echo，完全避开PowerShell多行字符串bug！重点修复）==========
+      - name: Generate io_u3d CMakeLists.txt
+        shell: cmd
         run: |
-          $io_u3d_cmake = @'
-cmake_minimum_required(VERSION 3.10)
-project(io_u3d)
+          set "WORKSPACE=%GITHUB_WORKSPACE%"
+          (
+          echo cmake_minimum_required(VERSION 3.10)
+          echo project(io_u3d)
+          echo set(CMAKE_CXX_STANDARD 14)
+          echo set(CMAKE_CXX_STANDARD_REQUIRED ON)
+          echo include_directories("%WORKSPACE%/meshlab-src/vcglib")
+          echo include_directories("%WORKSPACE%/meshlab-src/meshlab/src")
+          echo set(U3D_ROOT "%WORKSPACE%/u3d-install")
+          echo include_directories(${U3D_ROOT}/include)
+          echo link_directories(${U3D_ROOT}/lib)
+          echo file(GLOB IO_U3D_SRCS "%WORKSPACE%/meshlab-src/meshlab/src/meshlabplugins/io_u3d/*.cpp" "%WORKSPACE%/meshlab-src/meshlab/src/meshlabplugins/io_u3d/*.h")
+          echo add_library(io_u3d SHARED ${IO_U3D_SRCS})
+          echo target_link_libraries(io_u3d IFXCore IFXExporting IFXImporting IFXScheduling)
+          echo target_compile_definitions(io_u3d PRIVATE QT_PLUGIN)
+          echo set(CMAKE_INSTALL_PREFIX "%WORKSPACE%/io_u3d-plugin-out")
+          echo install(TARGETS io_u3d RUNTIME DESTINATION Plugins)
+          ) > io_u3d.cmake
 
-set(CMAKE_CXX_STANDARD 14)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-# VCGlib路径，来自meshlab‑2020.07
-include_directories("${{ github.workspace }}/meshlab-src/vcglib")
-include_directories("${{ github.workspace }}/meshlab-src/meshlab/src")
-
-# 使用刚刚云端编译出来的ningfei/u3d静态库（关键！避免版本冲突0xC0000005）
-set(U3D_ROOT "${{ github.workspace }}/u3d-install")
-include_directories(${U3D_ROOT}/include)
-link_directories(${U3D_ROOT}/lib)
-
-# io_u3d插件源文件
-file(GLOB IO_U3D_SRCS
-  "${{ github.workspace }}/meshlab-src/meshlab/src/meshlabplugins/io_u3d/*.cpp"
-  "${{ github.workspace }}/meshlab-src/meshlab/src/meshlabplugins/io_u3d/*.h"
-)
-
-add_library(io_u3d SHARED ${IO_U3D_SRCS})
-
-# 链接ningfei/u3d全部静态库
-target_link_libraries(io_u3d
-    IFXCore
-    IFXExporting
-    IFXImporting
-    IFXScheduling
-)
-
-# 定义meshlab插件导出宏
-target_compile_definitions(io_u3d PRIVATE QT_PLUGIN)
-
-# 输出目录
-set(CMAKE_INSTALL_PREFIX "${{ github.workspace }}/io_u3d-plugin-out")
-install(TARGETS io_u3d RUNTIME DESTINATION Plugins)
-'@
-          Set-Content -Path meshlab‑io_u3d.cmake -Value $io_u3d_cmake -Encoding UTF8
-
-      # 编译io_u3d.dll插件
-      - name: Build io_u3d.dll plugin
+      # ==========第五步：编译io_u3d.dll==========
+      - name: Build io_u3d.dll
         shell: cmd
         run: |
           mkdir build_io_u3d
           cd build_io_u3d
-          cmake ..\meshlab‑io_u3d.cmake -G "NMake Makefiles" ^
+          cmake ..\io_u3d.cmake -G "NMake Makefiles" ^
             -Wno-dev ^
             -DCMAKE_BUILD_TYPE=Release
           nmake install
 
-      # 复制全套产物：1.io_u3d.dll  2.IDTFConverter_x64全套5个二进制
-      - name: Collect all artifacts
+      # ==========打包全部产物==========
+      - name: Collect all files
         shell: cmd
         run: |
           mkdir final_artifact
           xcopy /E /I io_u3d-plugin-out\Plugins final_artifact\Plugins
           xcopy /E /I u3d-install\bin final_artifact\IDTFConverter_x64
 
-      - name: 上传产出物 Artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: u3d‑io_u3d‑x64‑full
+          name: u3d-io_u3d-x64-full
           path: ${{ github.workspace }}\final_artifact
