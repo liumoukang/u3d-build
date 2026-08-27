@@ -41,23 +41,24 @@ jobs:
           git checkout b56ae6f
           git submodule update --init vcglib
 
-      # ==========第三步：Qt5.15.2 + aqt2.1.0（修复Bad7zFile解压bug）==========
-      - name: Install Qt5.15.2 with stable aqt 2.1.0
-        shell: cmd
-        run: |
-          python -m pip install aqtinstall==2.1.0
-          python -m aqt install-qt windows desktop 5.15.2 win64_msvc2019_64 --outputdir %GITHUB_WORKSPACE%\Qt
-        env:
-          PYTHONUNBUFFERED: 1
+      # ==========第三步：【重点替换】使用成熟install-qt-action，彻底规避aqt+py7zr解压bug ==========
+      - name: Install Qt5.15.2
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2019_64'
+          install-deps: true
 
-      # ==========第四步：生成插件metadata.json + CMakeLists.txt（重点修复插件缺失元数据问题）==========
+      # ==========第四步：生成插件metadata.json + CMakeLists.txt（已经提前修复插件元数据、导出宏、vcglib兼容）==========
       - name: Generate io_u3d metadata & CMakeLists.txt
         shell: cmd
         run: |
           set "WORKSPACE=%GITHUB_WORKSPACE%"
-          set "QT5_ROOT=%WORKSPACE%\Qt\5.15.2\msvc2019_64"
+          set "QT5_ROOT=%QT_ROOT%"
           set "PLUGIN_META=%WORKSPACE%\io_u3d_metadata.json"
-          :: 生成Meshlab IO插件必需的metadata文件
+          :: Meshlab IO插件必需metadata
           echo { > %PLUGIN_META%
           echo   "name": "IO U3D", >> %PLUGIN_META%
           echo   "version": "1.0", >> %PLUGIN_META%
@@ -66,7 +67,7 @@ jobs:
           echo   "type": "IO" >> %PLUGIN_META%
           echo } >> %PLUGIN_META%
 
-          :: 生成CMakeLists.txt，增加MESHLAB插件导出宏 + 嵌入元数据
+          :: CMake，内置MSVC兼容参数、meshlab插件宏
           (
           echo cmake_minimum_required(VERSION 3.10)
           echo project(io_u3d)
@@ -81,16 +82,15 @@ jobs:
           echo link_directories(${U3D_ROOT}/lib)
           echo file(GLOB IO_U3D_SRCS "%WORKSPACE%/meshlab-src/meshlab/src/meshlabplugins/io_u3d/*.cpp" "%WORKSPACE%/meshlab-src/meshlab/src/meshlabplugins/io_u3d/*.h")
           echo add_library(io_u3d SHARED ${IO_U3D_SRCS})
-          :: Meshlab插件核心导出宏，缺少会直接编译失败或者dll不可识别
+          echo target_compile_options(io_u3d PRIVATE /permissive- /Zc:twoPhase-)
           echo target_compile_definitions(io_u3d PRIVATE QT_PLUGIN MESHLAB_PLUGIN_IO_EXPORTS)
           echo target_link_libraries(io_u3d IFXCore IFXExporting IFXImporting IFXScheduling Qt5::Core)
           echo set(CMAKE_INSTALL_PREFIX "%WORKSPACE%/io_u3d-plugin-out")
           echo install(TARGETS io_u3d RUNTIME DESTINATION Plugins)
-          :: 同步把元数据json一并打包输出
           echo install(FILES "%PLUGIN_META%" DESTINATION Plugins)
           ) > CMakeLists.txt
 
-      # ==========第五步：编译io_u3d.dll，增加编译日志输出，方便排查vcglib模板报错==========
+      # ==========第五步：编译io_u3d.dll==========
       - name: Build io_u3d.dll
         shell: cmd
         run: |
@@ -103,7 +103,7 @@ jobs:
           echo ============ 输出产物目录 ============
           dir %GITHUB_WORKSPACE%\io_u3d-plugin-out\Plugins
 
-      # ==========打包所有产物（u3d库 + io_u3d.dll + metadata）==========
+      # ==========打包所有产物==========
       - name: Collect all files
         shell: cmd
         run: |
