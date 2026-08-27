@@ -1,4 +1,4 @@
-name: Build patched io_u3d (full meshlab compile)
+name: Build patched io_u3d MeshLab
 on:
   push:
     branches: [ main ]
@@ -8,10 +8,10 @@ jobs:
   build-windows-x64:
     runs-on: windows-latest
     steps:
-      - name: Checkout repo (contains io_u3d_wedge.patch)
+      - name: Checkout repo (include io_u3d_wedge.patch)
         uses: actions/checkout@v4
 
-      - name: Load MSVC 2019 x64 environment
+      - name: Prepare MSVC x64 env
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
@@ -21,14 +21,14 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/ningfei/u3d.git u3d-src
           cd u3d-src
-          powershell -Command "(Get-Content CMakeLists.txt -Raw) -replace 'cmake_minimum_required\(VERSION.*\)', 'cmake_minimum_required(VERSION 3.10)' | Set-Content CMakeLists.txt -Encoding UTF8"
+          powershell "(Get-Content CMakeLists.txt -Raw) -replace '(project\(.*?\))(cmake_minimum_required.*?)', '`$2`n`$1' | Set-Content CMakeLists.txt -Encoding UTF8"
           mkdir build
           cd build
-          cmake .. -G "Visual Studio 16 2019" -A x64 ^
+          cmake .. -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DCMAKE_INSTALL_PREFIX=%GITHUB_WORKSPACE%\u3d-install ^
             -DU3D_SHARED:BOOL=OFF
-          cmake --build . --config Release
+          cmake --build .
           cmake --install .
 
       - name: Checkout MeshLab b56ae6f
@@ -39,13 +39,13 @@ jobs:
           git checkout b56ae6f
           git submodule update --init vcglib
 
-      - name: Apply wedge crash patch
+      - name: Apply io_u3d patch
         shell: cmd
         run: |
           cd meshlab-src
           git apply %GITHUB_WORKSPACE%\io_u3d_wedge.patch
 
-      - name: Install Qt5.15.2
+      - name: Install Qt 5.15.2
         uses: jurplel/install-qt-action@v4
         with:
           version: '5.15.2'
@@ -54,19 +54,19 @@ jobs:
           arch: 'win64_msvc2019_64'
           install-deps: true
 
-      - name: Build full MeshLab
+      - name: Build MeshLab
         shell: cmd
         run: |
           cd meshlab-src
           mkdir build
           cd build
-          cmake .. -G "Visual Studio 16 2019" -A x64 ^
+          cmake .. -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DQT_QMAKE_EXECUTABLE=%QT_ROOT_DIR%\bin\qmake.exe ^
             -DU3D_ROOT=%GITHUB_WORKSPACE%\u3d-install
-          cmake --build . --config Release
+          cmake --build .
 
-      - name: Collect artifacts
+      - name: Collect outputs
         shell: cmd
         run: |
           mkdir final_artifact
