@@ -8,15 +8,15 @@ jobs:
   build-windows-x64:
     runs-on: windows-latest
     steps:
-      - name: Checkout workspace
+      - name: Checkout repo (contains io_u3d_wedge.patch)
         uses: actions/checkout@v4
 
-      - name: Load MSVC 2019 x64
+      - name: Load MSVC 2019 x64 environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      - name: Build ningfei/u3d static library
+      - name: Build u3d static library
         shell: cmd
         run: |
           git clone --depth 1 https://github.com/ningfei/u3d.git u3d-src
@@ -39,36 +39,11 @@ jobs:
           git checkout b56ae6f
           git submodule update --init vcglib
 
-      - name: Apply wedge crash patch to io_u3d.cpp
-        shell: powershell
+      - name: Apply wedge crash patch
+        shell: cmd
         run: |
-          $cppPath = "$env:GITHUB_WORKSPACE/meshlab-src/meshlab/src/meshlabplugins/io_u3d/io_u3d.cpp"
-          $content = Get-Content $cppPath -Raw
-          # 插入 totalWedgeCount 统计
-          $content = $content -replace '(int vn = 0;\s*int vc = 0;\s*int vq = 0;)', @'
-int vn = 0;
-int vc = 0;
-int vq = 0;
-int totalWedgeCount = 0;
-for(auto &f : m.face)
-{
-    totalWedgeCount +=3;
-}
-'@
-          # 修改 SetWedgeTexCoords 分配大小
-          $content = $content -replace '_mm_malloc\(sizeof\(IFXVector2\)\*m\.vert\.size\(\),16\)', '_mm_malloc(sizeof(IFXVector2)*totalWedgeCount,16)'
-          # 增加wedge索引边界判断
-          $content = $content -replace '(for \(int j=0;j<3;\+\+j\)\s*\{)', @'
-for (int j=0;j<3;++j)
-{
-    int wedgeIdx = i*3 + j;
-    if(wedgeIdx >= totalWedgeCount)
-    {
-        continue;
-    }
-'@
-          Set-Content -Path $cppPath -Value $content -Encoding UTF8
-          Write-Host "Patch applied successfully"
+          cd meshlab-src
+          git apply %GITHUB_WORKSPACE%\io_u3d_wedge.patch
 
       - name: Install Qt5.15.2
         uses: jurplel/install-qt-action@v4
@@ -82,7 +57,7 @@ for (int j=0;j<3;++j)
       - name: Build full MeshLab
         shell: cmd
         run: |
-          cd /d %GITHUB_WORKSPACE%\meshlab-src
+          cd meshlab-src
           mkdir build
           cd build
           cmake .. -G "Visual Studio 16 2019" -A x64 ^
@@ -95,8 +70,8 @@ for (int j=0;j<3;++j)
         shell: cmd
         run: |
           mkdir final_artifact
-          xcopy /E /I %GITHUB_WORKSPACE%\meshlab-src\build\distrib final_artifact\MeshLab
-          xcopy /E /I %GITHUB_WORKSPACE%\u3d-install\bin final_artifact\IDTFConverter_x64
+          xcopy /E /I meshlab-src\build\distrib final_artifact\MeshLab
+          xcopy /E /I u3d-install\bin final_artifact\IDTFConverter_x64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
