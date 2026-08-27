@@ -16,7 +16,7 @@ jobs:
         with:
           arch: x64
 
-      # ==========第一步：编译 ningfei/u3d 静态库（和之前成功版本参数完全一致）==========
+      # ==========第一步：编译 ningfei/u3d（和之前成功版本完全一致，不动）==========
       - name: Clone ningfei/u3d source
         shell: cmd
         run: |
@@ -32,32 +32,37 @@ jobs:
             -DU3D_SHARED:BOOL=OFF
           nmake install
 
-      # ==========第二步：拉取MeshLab 2020.07（修复tag名称！Meshlab-2020.07）==========
+      # ==========第二步：MeshLab 固定commit，彻底杜绝tag问题==========
       - name: Clone MeshLab 2020.07 source
         shell: cmd
         run: |
-          git clone --depth 1 --branch Meshlab-2020.07 https://github.com/cnr-isti-vclab/meshlab.git meshlab-src
+          git clone https://github.com/cnr-isti-vclab/meshlab.git meshlab-src
           cd meshlab-src
+          git checkout b56ae6f
           git submodule update --init vcglib
 
-      # ==========第三步：安装Qt5.15（meshlab2020.07 io_u3d Qt插件依赖）==========
-      - name: Install Qt5
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: '5.15.2'
-          arch: 'win64_msvc2019_64'
-          modules: qtbase
+      # ==========第三步：Qt5.15.2 改用aqt原生安装，手动设置Qt5_DIR（重点修复，不再依赖action自动set env）==========
+      - name: Install Qt5.15.2
+        shell: cmd
+        run: |
+          python -m pip install aqtinstall
+          python -m aqt install-qt windows desktop 5.15.2 win64_msvc2019_64 --outputdir %GITHUB_WORKSPACE%\Qt
+        env:
+          PYTHONUNBUFFERED: 1
 
-      # ==========第四步：生成io_u3d的CMakeLists（cmd echo方式，避开powershell字符串bug）==========
+      # ==========第四步：生成io_u3d CMake，手动传入Qt5路径，不再依赖全局环境自动发现==========
       - name: Generate io_u3d CMakeLists.txt
         shell: cmd
         run: |
           set "WORKSPACE=%GITHUB_WORKSPACE%"
+          set "QT5_ROOT=%WORKSPACE%\Qt\5.15.2\msvc2019_64"
           (
           echo cmake_minimum_required(VERSION 3.10)
           echo project(io_u3d)
           echo set(CMAKE_CXX_STANDARD 14)
           echo set(CMAKE_CXX_STANDARD_REQUIRED ON)
+          echo set(Qt5_DIR "%QT5_ROOT%\lib\cmake\Qt5")
+          echo find_package(Qt5 REQUIRED COMPONENTS Core)
           echo include_directories("%WORKSPACE%/meshlab-src/vcglib")
           echo include_directories("%WORKSPACE%/meshlab-src/meshlab/src")
           echo set(U3D_ROOT "%WORKSPACE%/u3d-install")
@@ -65,13 +70,13 @@ jobs:
           echo link_directories(${U3D_ROOT}/lib)
           echo file(GLOB IO_U3D_SRCS "%WORKSPACE%/meshlab-src/meshlab/src/meshlabplugins/io_u3d/*.cpp" "%WORKSPACE%/meshlab-src/meshlab/src/meshlabplugins/io_u3d/*.h")
           echo add_library(io_u3d SHARED ${IO_U3D_SRCS})
-          echo target_link_libraries(io_u3d IFXCore IFXExporting IFXImporting IFXScheduling)
+          echo target_link_libraries(io_u3d IFXCore IFXExporting IFXImporting IFXScheduling Qt5::Core)
           echo target_compile_definitions(io_u3d PRIVATE QT_PLUGIN)
           echo set(CMAKE_INSTALL_PREFIX "%WORKSPACE%/io_u3d-plugin-out")
           echo install(TARGETS io_u3d RUNTIME DESTINATION Plugins)
           ) > io_u3d.cmake
 
-      # ==========第五步：编译io_u3d.dll==========
+      # ==========第五步：编译io_u3d.dll，额外打印日志方便排错==========
       - name: Build io_u3d.dll
         shell: cmd
         run: |
@@ -81,8 +86,9 @@ jobs:
             -Wno-dev ^
             -DCMAKE_BUILD_TYPE=Release
           nmake install
+          dir %GITHUB_WORKSPACE%\io_u3d-plugin-out\Plugins
 
-      # ==========打包全部产物==========
+      # ==========打包==========
       - name: Collect all files
         shell: cmd
         run: |
