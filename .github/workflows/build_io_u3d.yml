@@ -16,7 +16,7 @@ jobs:
         with:
           arch: x64
 
-      # ==========第一步：编译 ningfei/u3d 静态库（参数和之前成功版本完全一致）==========
+      # ==========第一步：编译 ningfei/u3d 静态库（和之前成功版本参数完全一致）==========
       - name: Clone ningfei/u3d source
         shell: cmd
         run: |
@@ -32,15 +32,15 @@ jobs:
             -DU3D_SHARED:BOOL=OFF
           nmake install
 
-      # ==========第二步：拉取MeshLab2020.07源码+vcglib==========
+      # ==========第二步：拉取MeshLab 2020.07（修复tag名称！Meshlab-2020.07）==========
       - name: Clone MeshLab 2020.07 source
         shell: cmd
         run: |
-          git clone --depth 1 --branch MeshLab_2020_07 https://github.com/cnr-isti-vclab/meshlab.git meshlab-src
+          git clone --depth 1 --branch Meshlab-2020.07 https://github.com/cnr-isti-vclab/meshlab.git meshlab-src
           cd meshlab-src
           git submodule update --init vcglib
 
-      # ==========第三步：安装Qt5.15（meshlab2020.07使用Qt5，io_u3d是Qt插件，必须！）==========
+      # ==========第三步：安装Qt5.15（meshlab2020.07 io_u3d Qt插件依赖）==========
       - name: Install Qt5
         uses: jurplel/install-qt-action@v4
         with:
@@ -48,7 +48,7 @@ jobs:
           arch: 'win64_msvc2019_64'
           modules: qtbase
 
-      # ==========第四步：直接生成io_u3d的CMakeLists（改用cmd echo，完全避开PowerShell多行字符串bug！重点修复）==========
+      # ==========第四步：生成io_u3d的CMakeLists（cmd echo方式，避开powershell字符串bug）==========
       - name: Generate io_u3d CMakeLists.txt
         shell: cmd
         run: |
