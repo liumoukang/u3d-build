@@ -1,4 +1,4 @@
-name: Build ningfei/u3d + io_u3d.dll x64
+name: Build patched io_u3d (full meshlab compile)
 on:
   push:
     branches: [ main ]
@@ -8,32 +8,30 @@ jobs:
   build-windows-x64:
     runs-on: windows-latest
     steps:
-      - name: 检出当前仓库
+      - name: Checkout workspace
         uses: actions/checkout@v4
 
-      - name: 加载 MSVC x64 编译环境
+      - name: Load MSVC 2019 x64
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      # ==========第一步：编译 ningfei/u3d ==========
-      - name: Clone ningfei/u3d source
+      - name: Build ningfei/u3d static library
         shell: cmd
         run: |
           git clone --depth 1 https://github.com/ningfei/u3d.git u3d-src
           cd u3d-src
-          powershell -Command "(Get-Content CMakeLists.txt) -replace 'cmake_minimum_required\(VERSION.*\)', 'cmake_minimum_required(VERSION 3.10)' | Set-Content CMakeLists.txt"
+          powershell -Command "(Get-Content CMakeLists.txt -Raw) -replace 'cmake_minimum_required\(VERSION.*\)', 'cmake_minimum_required(VERSION 3.10)' | Set-Content CMakeLists.txt -Encoding UTF8"
           mkdir build
           cd build
-          cmake .. -G "NMake Makefiles" ^
-            -Wno-dev ^
+          cmake .. -G "Visual Studio 16 2019" -A x64 ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DCMAKE_INSTALL_PREFIX=%GITHUB_WORKSPACE%\u3d-install ^
             -DU3D_SHARED:BOOL=OFF
-          nmake install
+          cmake --build . --config Release
+          cmake --install .
 
-      # ==========第二步：MeshLab 固定commit ==========
-      - name: Clone MeshLab 2020.07 source
+      - name: Checkout MeshLab b56ae6f
         shell: cmd
         run: |
           git clone https://github.com/cnr-isti-vclab/meshlab.git meshlab-src
@@ -41,7 +39,37 @@ jobs:
           git checkout b56ae6f
           git submodule update --init vcglib
 
-      # ==========第三步：Install Qt5.15.2 ==========
+      - name: Apply wedge crash patch to io_u3d.cpp
+        shell: powershell
+        run: |
+          $cppPath = "$env:GITHUB_WORKSPACE/meshlab-src/meshlab/src/meshlabplugins/io_u3d/io_u3d.cpp"
+          $content = Get-Content $cppPath -Raw
+          # 插入 totalWedgeCount 统计
+          $content = $content -replace '(int vn = 0;\s*int vc = 0;\s*int vq = 0;)', @'
+int vn = 0;
+int vc = 0;
+int vq = 0;
+int totalWedgeCount = 0;
+for(auto &f : m.face)
+{
+    totalWedgeCount +=3;
+}
+'@
+          # 修改 SetWedgeTexCoords 分配大小
+          $content = $content -replace '_mm_malloc\(sizeof\(IFXVector2\)\*m\.vert\.size\(\),16\)', '_mm_malloc(sizeof(IFXVector2)*totalWedgeCount,16)'
+          # 增加wedge索引边界判断
+          $content = $content -replace '(for \(int j=0;j<3;\+\+j\)\s*\{)', @'
+for (int j=0;j<3;++j)
+{
+    int wedgeIdx = i*3 + j;
+    if(wedgeIdx >= totalWedgeCount)
+    {
+        continue;
+    }
+'@
+          Set-Content -Path $cppPath -Value $content -Encoding UTF8
+          Write-Host "Patch applied successfully"
+
       - name: Install Qt5.15.2
         uses: jurplel/install-qt-action@v4
         with:
@@ -51,72 +79,27 @@ jobs:
           arch: 'win64_msvc2019_64'
           install-deps: true
 
-      # ==========第四步：【修复重点】进入io_u3d源码目录生成CMakeLists.txt 和 metadata ==========
-      - name: Generate io_u3d metadata & CMakeLists.txt
+      - name: Build full MeshLab
         shell: cmd
         run: |
-          set "WORKSPACE=%GITHUB_WORKSPACE%"
-          set "QT5_ROOT=%QT_ROOT%"
-          set "PLUGIN_SRC=%WORKSPACE%\meshlab-src\meshlab\src\meshlabplugins\io_u3d"
-          set "PLUGIN_META=%PLUGIN_SRC%\io_u3d_metadata.json"
-          cd /d %PLUGIN_SRC%
-          :: Meshlab IO插件必需metadata
-          echo { > %PLUGIN_META%
-          echo   "name": "IO U3D", >> %PLUGIN_META%
-          echo   "version": "1.0", >> %PLUGIN_META%
-          echo   "vendor": "Meshlab", >> %PLUGIN_META%
-          echo   "description": "U3D import/export plugin", >> %PLUGIN_META%
-          echo   "type": "IO" >> %PLUGIN_META%
-          echo } >> %PLUGIN_META%
+          cd /d %GITHUB_WORKSPACE%\meshlab-src
+          mkdir build
+          cd build
+          cmake .. -G "Visual Studio 16 2019" -A x64 ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DQT_QMAKE_EXECUTABLE=%QT_ROOT_DIR%\bin\qmake.exe ^
+            -DU3D_ROOT=%GITHUB_WORKSPACE%\u3d-install
+          cmake --build . --config Release
 
-          :: 在io_u3d源码目录生成CMakeLists.txt
-          (
-          echo cmake_minimum_required(VERSION 3.10)
-          echo project(io_u3d)
-          echo set(CMAKE_CXX_STANDARD 14)
-          echo set(CMAKE_CXX_STANDARD_REQUIRED ON)
-          echo set(Qt5_DIR "%QT5_ROOT%\lib\cmake\Qt5")
-          echo find_package(Qt5 REQUIRED COMPONENTS Core)
-          echo include_directories("%WORKSPACE%/meshlab-src/vcglib")
-          echo include_directories("%WORKSPACE%/meshlab-src/meshlab/src")
-          echo set(U3D_ROOT "%WORKSPACE%/u3d-install")
-          echo include_directories(${U3D_ROOT}/include)
-          echo link_directories(${U3D_ROOT}/lib)
-          echo file(GLOB IO_U3D_SRCS *.cpp *.h)
-          echo add_library(io_u3d SHARED ${IO_U3D_SRCS})
-          echo target_compile_options(io_u3d PRIVATE /permissive- /Zc:twoPhase-)
-          echo target_compile_definitions(io_u3d PRIVATE QT_PLUGIN MESHLAB_PLUGIN_IO_EXPORTS)
-          echo target_link_libraries(io_u3d IFXCore IFXExporting IFXImporting IFXScheduling Qt5::Core)
-          echo set(CMAKE_INSTALL_PREFIX "%WORKSPACE%/io_u3d-plugin-out")
-          echo install(TARGETS io_u3d RUNTIME DESTINATION Plugins)
-          echo install(FILES "%PLUGIN_META%" DESTINATION Plugins)
-          ) > CMakeLists.txt
-
-      # ==========第五步：【修复重点】在io_u3d源码下新建build目录编译 ==========
-      - name: Build io_u3d.dll
-        shell: cmd
-        run: |
-          set "PLUGIN_SRC=%GITHUB_WORKSPACE%\meshlab-src\meshlab\src\meshlabplugins\io_u3d"
-          cd /d %PLUGIN_SRC%
-          mkdir build_io_u3d
-          cd build_io_u3d
-          cmake .. -G "NMake Makefiles" ^
-            -Wno-dev ^
-            -DCMAKE_BUILD_TYPE=Release
-          nmake install
-          echo ============ 输出产物目录 ============
-          dir %GITHUB_WORKSPACE%\io_u3d-plugin-out\Plugins
-
-      # ==========打包所有产物 ==========
-      - name: Collect all files
+      - name: Collect artifacts
         shell: cmd
         run: |
           mkdir final_artifact
-          xcopy /E /I io_u3d-plugin-out\Plugins final_artifact\Plugins
-          xcopy /E /I u3d-install\bin final_artifact\IDTFConverter_x64
+          xcopy /E /I %GITHUB_WORKSPACE%\meshlab-src\build\distrib final_artifact\MeshLab
+          xcopy /E /I %GITHUB_WORKSPACE%\u3d-install\bin final_artifact\IDTFConverter_x64
 
-      - name: Upload Artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: u3d-io_u3d-x64-full
+          name: meshlab-full-patched-io_u3d-x64
           path: ${{ github.workspace }}\final_artifact
