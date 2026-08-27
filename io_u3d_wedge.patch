@@ -1,0 +1,35 @@
+--- a/meshlab/src/meshlabplugins/io_u3d/io_u3d.cpp
++++ b/meshlab/src/meshlabplugins/io_u3d/io_u3d.cpp
+@@ -184,6 +184,11 @@ bool IoU3DPlugin::exportMesh(const MeshModel &m, IFXMesh* pMesh)
+     int vn = 0;
+     int vc = 0;
+     int vq = 0;
++    int totalWedgeCount = 0;
++    for(auto &f : m.face)
++    {
++        totalWedgeCount +=3;
++    }
+ 
+     for (int i=0;i<m.vert.size();++i)
+     {
+@@ -216,7 +221,7 @@ bool IoU3DPlugin::exportMesh(const MeshModel &m, IFXMesh* pMesh)
+     }
+ 
+     if (m.hasWedgeTexCoord())
+-        pMesh->SetWedgeTexCoords((IFXVector2*)_mm_malloc(sizeof(IFXVector2)*m.vert.size(),16), m.vert.size());
++        pMesh->SetWedgeTexCoords((IFXVector2*)_mm_malloc(sizeof(IFXVector2)*totalWedgeCount,16), totalWedgeCount);
+ 
+     if (m.hasWedgeNormal())
+     {
+@@ -246,6 +251,11 @@ bool IoU3DPlugin::exportMesh(const MeshModel &m, IFXMesh* pMesh)
+         auto &f = m.face[i];
+         int k = 0;
+         for (int j=0;j<3;++j)
++        {
++            int wedgeIdx = i*3 + j;
++            if(wedgeIdx >= totalWedgeCount)
++                continue;
++
+             if (m.hasWedgeTexCoord())
+             {
+                 IFXVector2 &uv = pMesh->WedgeTexCoords()[wedgeIdx];
